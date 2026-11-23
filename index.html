@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pocket Arcade</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@500;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#eaf0ff;--ink:#14213d;--card:#fff;--blue:#2f4bff;--sun:#ffd23f;--mint:#3ddc97;--pink:#ff6bb5;--line:#14213d}
+@media(prefers-color-scheme:dark){:root{--bg:#141a33;--ink:#eef1ff;--card:#212a52;--line:#eef1ff}}
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:500 17px/1.5 Nunito,system-ui,sans-serif;min-height:100vh;padding:24px 16px 48px}
+main{max-width:760px;margin:0 auto}
+h1,h2{font-family:'Lilita One',Nunito,sans-serif;font-weight:400;letter-spacing:.01em;margin:0}
+h1{font-size:clamp(2.6rem,9vw,4.4rem);line-height:1}
+.sub{margin:.6rem 0 1.8rem;max-width:34ch}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px}
+.tile{all:unset;box-sizing:border-box;cursor:pointer;display:block;padding:20px;border:3px solid var(--line);border-radius:22px;box-shadow:5px 5px 0 var(--line);color:#14213d;transition:transform .12s,box-shadow .12s}
+.tile:hover{transform:translate(-2px,-2px);box-shadow:7px 7px 0 var(--line)}
+.tile:active{transform:translate(3px,3px);box-shadow:2px 2px 0 var(--line)}
+.tile:focus-visible,button:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.tile .ico{font-size:2.6rem;line-height:1}
+.tile h2{font-size:1.7rem;margin:.5rem 0 .1rem}
+.tile p{margin:0;font-weight:800;font-size:.95rem}
+.best{margin-top:.5rem;font-size:.85rem;opacity:.8}
+#stage{display:none}
+.bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.bar h2{font-size:2.2rem}
+.btn{cursor:pointer;font:800 1rem Nunito,sans-serif;color:#14213d;background:var(--sun);border:3px solid var(--line);border-radius:14px;padding:8px 16px;box-shadow:3px 3px 0 var(--line)}
+.btn:active{transform:translate(2px,2px);box-shadow:1px 1px 0 var(--line)}
+#score{margin-left:auto;font-weight:800}
+#play{display:flex;flex-direction:column;align-items:center;gap:14px;padding:18px;background:var(--card);border:3px solid var(--line);border-radius:22px;box-shadow:5px 5px 0 var(--line)}
+.hint{margin:10px 0 0;font-size:.9rem;opacity:.75;text-align:center}
+canvas{max-width:100%;height:auto;border-radius:14px;border:3px solid var(--line);touch-action:none;background:#dfe7ff}
+.dpad{display:grid;grid-template-columns:repeat(3,56px);gap:6px}
+.dpad .btn{padding:8px 0;font-size:1.3rem}
+.dpad .u{grid-column:2}.dpad .l{grid-column:1}.dpad .d{grid-column:2}.dpad .r{grid-column:3;grid-row:2}
+.dpad .l{grid-row:2}.dpad .d{grid-row:2}.dpad .u{grid-row:1}
+.board{display:grid;gap:10px;touch-action:none}
+.cell{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;justify-content:center;border:3px solid var(--line);border-radius:16px;background:var(--bg);font:400 2.6rem 'Lilita One',sans-serif;color:var(--ink);user-select:none;aspect-ratio:1}
+.mem{grid-template-columns:repeat(4,minmax(0,78px))}
+.mem .cell{font-size:2.2rem}
+.mem .cell.up{background:var(--sun);color:#14213d}
+.mem .cell.ok{background:var(--mint);color:#14213d}
+.ttt{grid-template-columns:repeat(3,minmax(0,92px))}
+.ttt .cell:disabled{cursor:default}
+.ttt .x{color:var(--blue)}.ttt .o{color:var(--pink)}
+.g2048{grid-template-columns:repeat(4,minmax(0,78px));padding:10px;background:var(--bg);border:3px solid var(--line);border-radius:18px}
+.g2048 .cell{cursor:default;font-size:1.5rem;color:#14213d;background:rgba(127,127,160,.2);border-width:0}
+@media(prefers-reduced-motion:reduce){.tile{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <section id="hub">
+    <h1>Pocket Arcade</h1>
+    <p class="sub">Four quick games. No sign-up, no downloads. Pick one and play.</p>
+    <div class="grid" id="grid"></div>
+  </section>
+  <section id="stage">
+    <div class="bar">
+      <button class="btn" id="back">Back to games</button>
+      <h2 id="gname"></h2>
+      <span id="score"></span>
+    </div>
+    <div id="play"></div>
+    <p class="hint" id="ghint"></p>
+  </section>
+</main>
+<script>
+const $ = s => document.querySelector(s);
+const el = (t, c, txt) => { const e = document.createElement(t); if (c) e.className = c; if (txt != null) e.textContent = txt; return e; };
+const store = {
+  get(k){ try { return localStorage.getItem(k); } catch(e){ return null; } },
+  set(k,v){ try { localStorage.setItem(k,v); } catch(e){} }
+};
+const swipe = (node, fn) => {
+  let sx, sy;
+  node.addEventListener('touchstart', e => { sx = e.touches[0].clientX; sy = e.touches[0].clientY; }, {passive:true});
+  node.addEventListener('touchend', e => {
+    const dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return;
+    Math.abs(dx) > Math.abs(dy) ? fn(dx > 0 ? 'r' : 'l') : fn(dy > 0 ? 'd' : 'u');
+  });
+};
+
+/* ---------- Snake ---------- */
+function snake(root, set) {
+  const N = 18, C = 20, cv = el('canvas'); cv.width = cv.height = N * C; root.append(cv);
+  const ctx = cv.getContext('2d'), V = {u:[0,-1], d:[0,1], l:[-1,0], r:[1,0]};
+  let s, d, nd, f, sc, dead, best = +store.get('best-snake') || 0;
+  const placeFood = () => { do f = {x: Math.random()*N|0, y: Math.random()*N|0}; while (s.some(p => p.x === f.x && p.y === f.y)); };
+  const reset = () => { s = [{x:9,y:9},{x:8,y:9},{x:7,y:9}]; d = nd = V.r; sc = 0; dead = false; placeFood(); set('Score 0 · Best ' + best); draw(); };
+  const turn = k => { const v = V[k]; if (v && (v[0] !== -d[0] || v[1] !== -d[1])) nd = v; };
+  function draw() {
+    ctx.fillStyle = '#dfe7ff'; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.fillStyle = '#ff6bb5'; ctx.beginPath(); ctx.arc(f.x*C + C/2, f.y*C + C/2, C/2 - 2, 0, 7); ctx.fill();
+    s.forEach((p, i) => { ctx.fillStyle = i ? '#2f4bff' : '#14213d'; ctx.fillRect(p.x*C + 1, p.y*C + 1, C - 2, C - 2); });
+  }
+  function step() {
+    if (dead) return;
+    d = nd;
+    const h = {x: s[0].x + d[0], y: s[0].y + d[1]};
+    if (h.x < 0 || h.y < 0 || h.x >= N || h.y >= N || s.some(p => p.x === h.x && p.y === h.y)) {
+      dead = true;
+      if (sc > best) { best = sc; store.set('best-snake', best); }
+      set('Game over: ' + sc + '. Press space or tap the board to restart.');
+      return;
+    }
+    s.unshift(h);
+    if (h.x === f.x && h.y === f.y) { sc++; placeFood(); set('Score ' + sc + ' · Best ' + Math.max(best, sc)); } else s.pop();
+    draw();
+  }
+  const keys = {ArrowUp:'u', ArrowDown:'d', ArrowLeft:'l', ArrowRight:'r', w:'u', s:'d', a:'l', d:'r'};
+  const onKey = e => {
+    if (e.key === ' ' && dead) { reset(); e.preventDefault(); return; }
+    if (keys[e.key]) { turn(keys[e.key]); e.preventDefault(); }
+  };
+  document.addEventListener('keydown', onKey);
+  cv.addEventListener('click', () => { if (dead) reset(); });
+  swipe(cv, turn);
+  const pad = el('div', 'dpad');
+  [['u','▲'],['l','◀'],['d','▼'],['r','▶']].forEach(([k, t]) => {
+    const b = el('button', 'btn ' + k, t); b.setAttribute('aria-label', k); b.onclick = () => turn(k); pad.append(b);
+  });
+  root.append(pad);
+  reset();
+  const timer = setInterval(step, 120);
+  return () => { clearInterval(timer); document.removeEventListener('keydown', onKey); };
+}
+
+/* ---------- Memory Match ---------- */
+function memory(root, set) {
+  const E = ['🐙','🍋','🚀','🎲','🌵','🎧','🍄','🪁'];
+  const deck = [...E, ...E].sort(() => Math.random() - .5);
+  const grid = el('div', 'board mem'); root.append(grid);
+  let first = null, lock = false, moves = 0, found = 0, best = +store.get('best-memory') || 0;
+  const label = () => set('Moves ' + moves + (best ? ' · Best ' + best : ''));
+  deck.forEach(sym => {
+    const c = el('button', 'cell', '?'); c.setAttribute('aria-label', 'Hidden card');
+    c.onclick = () => {
+      if (lock || c.classList.contains('up') || c.classList.contains('ok')) return;
+      c.textContent = sym; c.classList.add('up');
+      if (!first) { first = c; return; }
+      moves++; label();
+      if (first.textContent === sym) {
+        first.className = c.className = 'cell ok'; first = null; found++;
+        if (found === E.length) {
+          if (!best || moves < best) { best = moves; store.set('best-memory', best); }
+          set('You won in ' + moves + ' moves. Best ' + best + '.');
+        }
+      } else {
+        lock = true; const a = first; first = null;
+        setTimeout(() => { a.textContent = c.textContent = '?'; a.classList.remove('up'); c.classList.remove('up'); lock = false; }, 700);
+      }
+    };
+    grid.append(c);
+  });
+  label();
+  return () => {};
+}
+
+/* ---------- Tic-Tac-Toe ---------- */
+function ttt(root, set) {
+  const L = [[0,1,2],[3,4,5],[6,7,8],[0,3,6],[1,4,7],[2,5,8],[0,4,8],[2,4,6]];
+  const win = b => { for (const [a,c,d] of L) if (b[a] && b[a] === b[c] && b[a] === b[d]) return b[a]; return b.every(Boolean) ? 'T' : null; };
+  const mm = (b, t) => {
+    const w = win(b); if (w) return w === 'O' ? 1 : w === 'X' ? -1 : 0;
+    let r = t === 'O' ? -2 : 2;
+    b.forEach((v, i) => { if (v) return; b[i] = t; const x = mm(b, t === 'O' ? 'X' : 'O'); b[i] = null; r = t === 'O' ? Math.max(r, x) : Math.min(r, x); });
+    return r;
+  };
+  const pick = b => {
+    const free = b.map((v, i) => v ? -1 : i).filter(i => i >= 0);
+    if (Math.random() < .25) return free[Math.random()*free.length|0];
+    let bi = free[0], bs = -3;
+    free.forEach(i => { b[i] = 'O'; const x = mm(b, 'X'); b[i] = null; if (x > bs) { bs = x; bi = i; } });
+    return bi;
+  };
+  const grid = el('div', 'board ttt'); root.append(grid);
+  const tally = {W:0, L:0, D:0};
+  let b, cells;
+  const tl = msg => set((msg ? msg + ' · ' : '') + 'Wins ' + tally.W + ' · Losses ' + tally.L + ' · Draws ' + tally.D);
+  const end = w => {
+    cells.forEach(c => c.disabled = true);
+    if (w === 'X') { tally.W++; tl('You win!'); } else if (w === 'O') { tally.L++; tl('Computer wins.'); } else { tally.D++; tl('Draw.'); }
+    const again = el('button', 'btn', 'Play again'); again.onclick = () => { again.remove(); reset(); }; root.append(again);
+  };
+  const reset = () => {
+    b = Array(9).fill(null); grid.innerHTML = ''; cells = [];
+    for (let i = 0; i < 9; i++) {
+      const c = el('button', 'cell'); c.setAttribute('aria-label', 'Square ' + (i + 1));
+      c.onclick = () => {
+        if (b[i]) return;
+        b[i] = 'X'; c.textContent = 'X'; c.classList.add('x'); c.disabled = true;
+        let w = win(b); if (w) return end(w);
+        const j = pick(b); b[j] = 'O'; cells[j].textContent = 'O'; cells[j].classList.add('o'); cells[j].disabled = true;
+        w = win(b); if (w) end(w);
+      };
+      cells.push(c); grid.append(c);
+    }
+    tl('');
+  };
+  reset();
+  return () => {};
+}
+
+/* ---------- 2048 ---------- */
+function g2048(root, set) {
+  const grid = el('div', 'board g2048'); root.append(grid);
+  let g = Array(16).fill(0), score = 0, over = false, best = +store.get('best-2048') || 0;
+  const add = () => { const e = g.map((v, i) => v ? -1 : i).filter(i => i >= 0); if (e.length) g[e[Math.random()*e.length|0]] = Math.random() < .9 ? 2 : 4; };
+  const tiles = Array.from({length: 16}, () => { const t = el('div', 'cell'); grid.append(t); return t; });
+  const render = () => {
+    g.forEach((v, i) => {
+      tiles[i].textContent = v || '';
+      tiles[i].style.background = v ? 'hsl(' + ((Math.log2(v) * 38 + 200) % 360) + ' 85% 65%)' : '';
+      tiles[i].style.fontSize = v > 999 ? '1.1rem' : v > 99 ? '1.3rem' : '';
+    });
+    best = Math.max(best, score); store.set('best-2048', best);
+    set('Score ' + score + ' · Best ' + best + (over ? ' · No moves left. Press R or Restart.' : ''));
+  };
+  const idx = (dir, i) => [0,1,2,3].map(k => dir === 'l' ? i*4 + k : dir === 'r' ? i*4 + 3 - k : dir === 'u' ? k*4 + i : (3 - k)*4 + i);
+  const slide = line => {
+    const a = line.filter(Boolean);
+    for (let i = 0; i < a.length - 1; i++) if (a[i] === a[i+1]) { a[i] *= 2; score += a[i]; a.splice(i + 1, 1); }
+    while (a.length < 4) a.push(0);
+    return a;
+  };
+  const stuck = () => !g.includes(0) && !g.some((v, i) => (i % 4 < 3 && v === g[i+1]) || (i < 12 && v === g[i+4]));
+  const move = dir => {
+    if (over) return;
+    let moved = false;
+    for (let i = 0; i < 4; i++) {
+      const ix = idx(dir, i), n = slide(ix.map(j => g[j]));
+      ix.forEach((j, k) => { if (g[j] !== n[k]) { moved = true; g[j] = n[k]; } });
+    }
+    if (moved) { add(); over = stuck(); }
+    render();
+  };
+  const restart = () => { g.fill(0); score = 0; over = false; add(); add(); render(); };
+  const keys = {ArrowUp:'u', ArrowDown:'d', ArrowLeft:'l', ArrowRight:'r', w:'u', s:'d', a:'l', d:'r'};
+  const onKey = e => {
+    if (e.key === 'r') return restart();
+    if (keys[e.key]) { move(keys[e.key]); e.preventDefault(); }
+  };
+  document.addEventListener('keydown', onKey);
+  swipe(grid, move);
+  const rb = el('button', 'btn', 'Restart'); rb.onclick = restart; root.append(rb);
+  restart();
+  return () => document.removeEventListener('keydown', onKey);
+}
+
+/* ---------- Hub ---------- */
+const GAMES = {
+  snake:  {name:'Snake',        ico:'🐍', color:'#3ddc97', blurb:'Eat, grow, don’t crash.',        hint:'Arrow keys or WASD on a keyboard. Swipe or use the buttons on a phone.', run:snake},
+  memory: {name:'Memory Match', ico:'🧠', color:'#ffd23f', blurb:'Find all eight pairs.',          hint:'Flip two cards at a time. Fewer moves is better.', run:memory},
+  ttt:    {name:'Tic-Tac-Toe',  ico:'❌', color:'#ff6bb5', blurb:'You are X. Beat the computer.',  hint:'The computer is good, but it makes a mistake now and then.', run:ttt},
+  g2048:  {name:'2048',         ico:'🔢', color:'#8fb0ff', blurb:'Merge tiles to reach 2048.',     hint:'Arrow keys or WASD, or swipe. Press R to restart.', run:g2048}
+};
+const bestKey = {snake:'best-snake', memory:'best-memory', g2048:'best-2048'};
+const grid = $('#grid');
+Object.entries(GAMES).forEach(([id, g]) => {
+  const t = el('button', 'tile'); t.style.background = g.color;
+  t.append(el('div', 'ico', g.ico), el('h2', '', g.name), el('p', '', g.blurb));
+  t.onclick = () => { location.hash = id; };
+  grid.append(t);
+});
+let stop = null;
+function route() {
+  if (stop) { stop(); stop = null; }
+  const id = location.hash.slice(1), g = GAMES[id];
+  $('#hub').style.display = g ? 'none' : 'block';
+  $('#stage').style.display = g ? 'block' : 'none';
+  $('#play').innerHTML = '';
+  if (!g) { document.title = 'Pocket Arcade'; return; }
+  document.title = g.name + ' · Pocket Arcade';
+  $('#gname').textContent = g.name;
+  $('#ghint').textContent = g.hint;
+  stop = g.run($('#play'), txt => { $('#score').textContent = txt; });
+}
+$('#back').onclick = () => { location.hash = ''; };
+window.addEventListener('hashchange', route);
+route();
+</script>
+</body>
+</html>
