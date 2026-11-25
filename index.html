@@ -252,39 +252,102 @@ function g2048(root, set) {
 
 /* ---------- Folded Halls (impossible-rooms maze) ---------- */
 function halls(root, set) {
-  const MAP = ['###############','#S....#.......#','#.....#.#####.#','#.....a.#...#.#','#.....#.#.E.#.#','#######.#...#.#','#.......#####.#','#.#####.......#','###############'];
+  const MAP = [
+    '##################',
+    '#11111#######5E5##',
+    '#11L11#######555##',
+    '#11111a######555##',
+    '#11111#######555##',
+    '##################',
+    '########L#########',
+    '#22222222222222d##',
+    '############3#####',
+    '########b3333#####',
+    '##################'];
   // portal cell -> [target x, target y, quarter turns]
-  const PORTALS = {'6,3':[7,7,3], '13,4':[9,4,0], '12,7':[9,7,0]};
-  const solid = (x, y) => { const c = (MAP[y] || '')[x]; return !c || c === '#' || c === 'E'; };
+  const PORTALS = {'6,3':[12,8,3], '15,7':[3,7,0], '8,9':[14,3,1]};
+  const solid = (x, y) => { const c = (MAP[y] || '')[x]; return !c || '#EL'.includes(c); };
   const rot = (x, y, k) => { for (let i = 0; i < k; i++) { const t = x; x = -y; y = t; } return [x, y]; };
-  const VW = 480, VH = 300;
-  const cv = el('canvas'); cv.width = VW; cv.height = VH; cv.style.width = 'min(100%,720px)'; root.append(cv);
-  const ctx = cv.getContext('2d');
+  const hsl = (h, s, l) => { s /= 100; l /= 100; const a = s * Math.min(l, 1 - l), f = n => { const k = (n + h / 30) % 12; return (l - a * Math.max(-1, Math.min(k - 3, 9 - k, 1))) * 255 | 0; }; return [f(0), f(8), f(4)]; };
+  const HUES = {'1':210, '2':285, '3':35, '4':150, '5':50, '.':260};
+  const PAL = {};
+  for (const c in HUES) { const h = HUES[c]; PAL[c] = {w:hsl(h,55,36), w2:hsl(h,55,28), wl:hsl(h,95,68), fl:hsl(h,50,15), fll:hsl(h,95,58), cl:hsl(h,50,9), cll:hsl(h,80,40)}; }
+  const pal = c => PAL[c] || PAL['.'];
+  const FOG = [16, 14, 36], VW = 400, VH = 250, K = Math.tan(.55), FOC = VW / (2 * K);
+  const pack = (r, g, b) => 0xff000000 | (Math.min(255, b) << 16) | (Math.min(255, g) << 8) | Math.min(255, r);
+  const fg = (c, f) => pack(FOG[0] + (c[0] - FOG[0]) * f, FOG[1] + (c[1] - FOG[1]) * f, FOG[2] + (c[2] - FOG[2]) * f);
+  const cv = el('canvas'); cv.width = VW; cv.height = VH; cv.style.width = 'min(100%,800px)'; root.append(cv);
+  const ctx = cv.getContext('2d'), img = ctx.createImageData(VW, VH), buf = new Uint32Array(img.data.buffer);
   const keys = {};
-  let px, py, pa, t0, won, raf, lastSec = -1;
-  const reset = () => { px = 1.5; py = 1.5; pa = 0; t0 = performance.now(); won = false; lastSec = -1; };
+  let px, py, pa, t0, won, raf, lastSec = -1, tm = 0, ac;
+  const reset = () => { px = 1.5; py = 3.5; pa = 0; t0 = performance.now(); won = false; lastSec = -1; };
 
   function cast(ang) {
     let x = px, y = py, dx = Math.cos(ang), dy = Math.sin(ang), total = 0;
+    const segs = [{x, y, dx, dy, t0: 0}];
     for (let hop = 0; hop < 10; hop++) {
-      let mx = Math.floor(x), my = Math.floor(y);
+      let mx = Math.floor(x), my = Math.floor(y), pmx = mx, pmy = my;
       const ddx = dx === 0 ? 1e30 : Math.abs(1 / dx), ddy = dy === 0 ? 1e30 : Math.abs(1 / dy);
       const sx = dx < 0 ? -1 : 1, sy = dy < 0 ? -1 : 1;
       let sdx = (dx < 0 ? x - mx : mx + 1 - x) * ddx, sdy = (dy < 0 ? y - my : my + 1 - y) * ddy;
       let side = 0, tt = 0, portal = null;
       for (let i = 0; i < 40; i++) {
+        pmx = mx; pmy = my;
         if (sdx < sdy) { tt = sdx; sdx += ddx; mx += sx; side = 0; } else { tt = sdy; sdy += ddy; my += sy; side = 1; }
         portal = PORTALS[mx + ',' + my];
         if (portal) break;
-        if (solid(mx, my)) return {d: total + tt, mx, my, side};
+        if (solid(mx, my)) {
+          const hx = x + dx * tt, hy = y + dy * tt, w = side === 0 ? hy : hx;
+          return {d: total + tt, mx, my, side, u: w - Math.floor(w), zone: (MAP[pmy] || '')[pmx], segs};
+        }
       }
       if (!portal) break;
       const [lx, ly] = rot(x + dx * tt - mx - .5, y + dy * tt - my - .5, portal[2]);
       [dx, dy] = rot(dx, dy, portal[2]);
       x = portal[0] + .5 + lx + dx * 1e-4; y = portal[1] + .5 + ly + dy * 1e-4;
       total += tt;
+      segs.push({x, y, dx, dy, t0: total});
     }
-    return {d: 99, mx: 0, my: 0, side: 0};
+    return {d: 99, mx: 0, my: 0, side: 0, u: 0, zone: '.', segs};
+  }
+
+  function flat(segs, rd, ceil) {
+    let s = segs[0];
+    for (let k = 1; k < segs.length && segs[k].t0 <= rd; k++) s = segs[k];
+    const x = s.x + s.dx * (rd - s.t0), y = s.y + s.dy * (rd - s.t0), cx = Math.floor(x), cy = Math.floor(y), p = pal((MAP[cy] || '')[cx]);
+    const gx = x - cx, gy = y - cy, e = Math.min(gx, 1 - gx, gy, 1 - gy);
+    let c, k;
+    if (e < .03 + rd * .004) { c = ceil ? p.cll : p.fll; k = .8 + .3 * Math.sin(tm * 2.5 - rd * .7); }
+    else { c = ceil ? p.cl : p.fl; k = (cx + cy) & 1 ? 1.35 : 1; }
+    let f = Math.max(0, 1 - rd / 14); f *= f;
+    return pack(FOG[0] + (c[0] * k - FOG[0]) * f, FOG[1] + (c[1] * k - FOG[1]) * f, FOG[2] + (c[2] * k - FOG[2]) * f);
+  }
+
+  function draw() {
+    for (let i = 0; i < VW; i++) {
+      const a = pa + Math.atan((i / VW - .5) * 2 * K), ca = Math.cos(a - pa), h = cast(a);
+      const dp = Math.max(.05, h.d * ca), lh = FOC / dp, top = VH / 2 - lh / 2, bot = top + lh;
+      const y0 = Math.max(0, Math.ceil(top)), y1 = Math.min(VH, Math.floor(bot));
+      const ch = MAP[h.my][h.mx], p = pal(h.zone);
+      let A = p.w, B = p.w2, L = p.wl;
+      if (ch === 'L') { A = [205, 235, 255]; B = [120, 170, 215]; L = [255, 255, 255]; }
+      else if (ch === 'E') { const q = .75 + .25 * Math.sin(tm * 4); A = [255 * q, 190 * q, 60 * q]; B = [200 * q, 140 * q, 40 * q]; L = [255, 245, 180]; }
+      let f = Math.max(0, 1 - dp / 14); f = f * f * (h.side ? .78 : 1);
+      const pA = fg(A, f), pB = fg(B, f), pL = fg(L, f), thr = .045 + dp * .004;
+      for (let y = 0; y < y0; y++) buf[y * VW + i] = flat(h.segs, FOC * .5 / (VH / 2 - y - .5) / ca, true);
+      for (let y = y0; y < y1; y++) {
+        const v = (y - top) / lh;
+        let c;
+        if (ch === 'L') c = ((h.u * 8) | 0) & 1 ? pA : pB;
+        else {
+          const gu = (h.u * 3) % 1, gv = (v * 3) % 1;
+          c = Math.min(gu, 1 - gu, gv, 1 - gv) < thr ? pL : (((h.u * 3) | 0) + ((v * 3) | 0)) & 1 ? pB : pA;
+        }
+        buf[y * VW + i] = c;
+      }
+      for (let y = y1; y < VH; y++) buf[y * VW + i] = flat(h.segs, FOC * .5 / (y + .5 - VH / 2) / ca, false);
+    }
+    ctx.putImageData(img, 0, 0);
   }
 
   function tick(dt, ts) {
@@ -294,50 +357,48 @@ function halls(root, set) {
     const f = (keys.w || keys.ArrowUp ? 1 : 0) - (keys.s || keys.ArrowDown ? 1 : 0), st = (keys.d ? 1 : 0) - (keys.a ? 1 : 0);
     const nx = px + (Math.cos(pa) * f - Math.sin(pa) * st) * sp, ny = py + (Math.sin(pa) * f + Math.cos(pa) * st) * sp, r = .18;
     const free = (x, y) => !(solid(Math.floor(x - r), Math.floor(y - r)) || solid(Math.floor(x + r), Math.floor(y - r)) || solid(Math.floor(x - r), Math.floor(y + r)) || solid(Math.floor(x + r), Math.floor(y + r)));
-    if (free(nx, py)) px = nx;
-    if (free(px, ny)) py = ny;
+    const stuck = !free(px, py), ok = (x, y) => free(x, y) || (stuck && !solid(Math.floor(x), Math.floor(y)));
+    if (ok(nx, py)) px = nx;
+    if (ok(px, ny)) py = ny;
     const p = PORTALS[Math.floor(px) + ',' + Math.floor(py)];
     if (p) { const [lx, ly] = rot(px % 1 - .5, py % 1 - .5, p[2]); px = p[0] + .5 + lx; py = p[1] + .5 + ly; pa += p[2] * Math.PI / 2; }
     const sec = Math.floor((ts - t0) / 1000);
-    if (Math.hypot(px - 10.5, py - 4.5) < 1.1) {
+    if (Math.hypot(px - 14.5, py - 1.5) < 1.1) {
       won = true; document.exitPointerLock && document.exitPointerLock();
       set('You found it in ' + sec + 's. Press R to play again.');
     } else if (sec !== lastSec) { lastSec = sec; set('Time ' + sec + 's · find the glowing cell'); }
   }
 
-  function draw(ts) {
-    ctx.fillStyle = '#17133b'; ctx.fillRect(0, 0, VW, VH / 2);
-    ctx.fillStyle = '#0d0b21'; ctx.fillRect(0, VH / 2, VW, VH / 2);
-    const k = Math.tan(.55), tm = ts / 1000;
-    for (let i = 0; i < VW; i++) {
-      const a = pa + Math.atan((i / VW - .5) * 2 * k), h = cast(a);
-      const d = Math.max(.05, h.d * Math.cos(a - pa)), lh = Math.min(VH, VH / d * .9);
-      const glow = MAP[h.my][h.mx] === 'E';
-      const l = glow ? 62 + 18 * Math.sin(tm * 4) : Math.max(6, 58 - d * 5.5) - (h.side ? 9 : 0);
-      ctx.fillStyle = glow ? 'hsl(48 100% ' + l + '%)' : 'hsl(' + ((h.mx * 47 + h.my * 83 + tm * 25) % 360) + ' 65% ' + l + '%)';
-      ctx.fillRect(i, (VH - lh) / 2, 1, lh);
-    }
-  }
-
+  const hum = () => {
+    if (ac) return;
+    try {
+      ac = new (window.AudioContext || window.webkitAudioContext)();
+      const g = ac.createGain(); g.gain.value = .035; g.connect(ac.destination);
+      [55, 82.5, 110.4].forEach(fr => { const o = ac.createOscillator(); o.frequency.value = fr; o.connect(g); o.start(); });
+      const l = ac.createOscillator(), lg = ac.createGain(); l.frequency.value = .15; lg.gain.value = .02; l.connect(lg); lg.connect(g.gain); l.start();
+    } catch (e) {}
+  };
   let last = performance.now();
   const frame = ts => {
-    const dt = Math.min(.05, (ts - last) / 1000); last = ts;
+    const dt = Math.min(.05, (ts - last) / 1000); last = ts; tm = ts / 1000;
     if (!won) tick(dt, ts);
-    draw(ts);
+    draw();
     raf = requestAnimationFrame(frame);
   };
   const norm = e => e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  const down = e => { const k = norm(e); if (k === 'r') reset(); if (k.startsWith('Arrow') || k === ' ') e.preventDefault(); keys[k] = true; };
+  const down = e => { const k = norm(e); if (k === 'r') reset(); if (k.startsWith('Arrow') || k === ' ') e.preventDefault(); keys[k] = true; hum(); };
   const up = e => { keys[norm(e)] = false; };
   const mouse = e => { if (document.pointerLockElement === cv) pa += e.movementX * .003; };
-  cv.addEventListener('click', () => { if (!won && cv.requestPointerLock) cv.requestPointerLock(); });
+  cv.addEventListener('click', () => { hum(); if (!won && cv.requestPointerLock) cv.requestPointerLock(); });
   document.addEventListener('keydown', down); document.addEventListener('keyup', up); document.addEventListener('mousemove', mouse);
+  halls.dbg = () => ({px, py, pa, won});
   reset();
   raf = requestAnimationFrame(frame);
   return () => {
     cancelAnimationFrame(raf);
     document.removeEventListener('keydown', down); document.removeEventListener('keyup', up); document.removeEventListener('mousemove', mouse);
     document.exitPointerLock && document.exitPointerLock();
+    if (ac) ac.close();
   };
 }
 
@@ -346,7 +407,7 @@ const GAMES = {
   snake:  {name:'Snake',        ico:'🐍', color:'#4ff0b0', blurb:'Eat, grow, don’t crash.',        hint:'Arrow keys or WASD on a keyboard. Swipe or use the buttons on a phone.', run:snake},
   memory: {name:'Memory Match', ico:'🧠', color:'#ffcf5c', blurb:'Find all eight pairs.',          hint:'Flip two cards at a time. Fewer moves is better.', run:memory},
   ttt:    {name:'Tic-Tac-Toe',  ico:'❌', color:'#ff6fb1', blurb:'You are X. Beat the computer.',  hint:'The computer is good, but it makes a mistake now and then.', run:ttt},
-  halls:  {name:'Folded Halls', ico:'🌀', color:'#c58bff', blurb:'A maze that doesn’t add up.', hint:'WASD to move, arrow keys or mouse to look (click the view first). Find the glowing cell. Press R to restart.', run:halls},
+  halls:  {name:'Folded Halls', ico:'🌀', color:'#c58bff', blurb:'A maze that doesn’t add up.', hint:'WASD to move, arrow keys or mouse to look (click the view first). Find the glowing gold cell. Press R to restart.', run:halls},
   g2048:  {name:'2048',         ico:'🔢', color:'#7aa2ff', blurb:'Merge tiles to reach 2048.',     hint:'Arrow keys or WASD, or swipe. Press R to restart.', run:g2048}
 };
 const bestKey = {snake:'best-snake', memory:'best-memory', g2048:'best-2048'};
